@@ -1,4 +1,5 @@
-const API_BASE_URL = 'https://meat-menu-app.onrender.com';
+const API_BASE_URL =
+  process.env.EXPO_PUBLIC_API_URL || 'https://meat-menu-app.onrender.com';
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT';

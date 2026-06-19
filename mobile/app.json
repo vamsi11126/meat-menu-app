@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Meat Menu Mobile",
+    "name": "Meat Menu",
     "slug": "meat-menu-mobile",
     "version": "1.0.0",
     "sdkVersion": "54.0.0",
@@ -11,6 +11,8 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.meatmenu.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
