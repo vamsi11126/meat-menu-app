@@ -2,6 +2,7 @@
   "expo": {
     "name": "Meat Menu",
     "slug": "meat-menu-mobile",
+    "owner": "vamsi2618",
     "version": "1.0.0",
     "sdkVersion": "54.0.0",
     "orientation": "portrait",
@@ -23,6 +24,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "4504f632-eb64-4ee8-b934-0699c9f5de30"
+      }
     }
   }
 }
