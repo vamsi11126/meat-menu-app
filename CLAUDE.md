@@ -40,7 +40,7 @@ GET    /api/shops              (super admin only)
 POST   /api/shops              (super admin only)
 GET    /api/shops/:id/prices   (public — used by customer menu)
 POST   /api/shops/:id/prices   (shop owner only)
-GET    /api/shops/:id/qr       (shop owner only)
+GET    /api/shops/me           (shop owner only — returns shop data including QR code URL)
 
 ## Customer menu URL format
 /menu/:shopId → public page, no auth, shows today's prices in EN + Telugu
@@ -86,20 +86,11 @@ GET    /api/shops/:id/qr       (shop owner only)
   → Will be fixed in Phase 4 by setting MENU_BASE_URL (backend env)
     to the production Vercel URL
 
-### Phase 4 — Deployment ❌ NOT STARTED
-Target infrastructure:
-- Backend: Railway (Node.js + environment variables)
-- Web admin panel: Vercel
-- Database: Supabase (already live)
-- Mobile: Expo Go for now, EAS build later
-
-Deployment order:
-1. Deploy web to Vercel → get production URL
-2. Deploy backend to Railway → get production API URL
-3. Update MENU_BASE_URL in Railway env to the Vercel URL
-4. Update mobile API base URL to the Railway backend URL
-5. Update web API base URL to the Railway backend URL
-6. Test full flow end to end on production
+### Phase 4 — Deployment ✅ COMPLETE
+- Web admin panel: https://web-gamma-eosin-99.vercel.app
+- Backend API: https://meat-menu-app.onrender.com
+- Database: Supabase (hosted PostgreSQL)
+- QR codes now point to Vercel production URL (fixed)
 
 ## Known bugs to fix
 1. Super admin shop table shows "Not assigned" for owner name
@@ -108,8 +99,7 @@ Deployment order:
    → Fix: show "Not available" / "అందుబాటులో లేదు" when price is 0 or null
 
 ## Current task
-Start Phase 4 — Deployment. Follow the deployment order above:
-deploy web to Vercel, then backend to Railway, then point
-MENU_BASE_URL at the Vercel URL to fix the QR localhost issue.
+System fully deployed. Remaining: mobile smoke test
+against Render backend, then EAS build for standalone APK.
 
 
