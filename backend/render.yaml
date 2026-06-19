@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: meat-menu-app-backend
+    runtime: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: JWT_SECRET
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: MENU_BASE_URL
+        value: https://web-gamma-eosin-99.vercel.app
