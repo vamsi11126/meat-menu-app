@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import * as MediaLibrary from 'expo-media-library';
 import * as Sharing from 'expo-sharing';
 
@@ -24,11 +24,12 @@ function extractBase64Data(dataUrl: string) {
 }
 
 async function createQrFile(dataUrl: string, shopId: number) {
-  const fileUri = `${FileSystem.cacheDirectory}shop-${shopId}-qr.png`;
-  await FileSystem.writeAsStringAsync(fileUri, extractBase64Data(dataUrl), {
-    encoding: FileSystem.EncodingType.Base64,
-  });
-  return fileUri;
+  const file = new File(Paths.cache, `shop-${shopId}-qr.png`);
+  if (file.exists) {
+    file.delete();
+  }
+  file.write(extractBase64Data(dataUrl), { encoding: 'base64' });
+  return file.uri;
 }
 
 export function QRCodeScreen() {
