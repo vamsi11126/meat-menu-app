@@ -1,4 +1,4 @@
-const API_BASE_URL = 'https://doing-blob-labrador.ngrok-free.dev';
+const API_BASE_URL = 'https://meat-menu-app.onrender.com';
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT';
