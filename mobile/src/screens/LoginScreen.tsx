@@ -15,8 +15,8 @@ import { colors } from '../theme';
 
 export function LoginScreen() {
   const { login } = useAuth();
-  const [email, setEmail] = useState('owner@example.com');
-  const [password, setPassword] = useState('owner123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
