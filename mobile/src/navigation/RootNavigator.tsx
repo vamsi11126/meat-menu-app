@@ -6,9 +6,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '../context/AuthContext';
+import { ChangePasswordScreen } from '../screens/ChangePasswordScreen';
 import { DashboardScreen } from '../screens/DashboardScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { QRCodeScreen } from '../screens/QRCodeScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import { UpdatePricesScreen } from '../screens/UpdatePricesScreen';
 import { colors } from '../theme';
 
@@ -20,10 +22,40 @@ type AppTabsParamList = {
   Dashboard: undefined;
   UpdatePrices: undefined;
   QRCode: undefined;
+  Settings: undefined;
+};
+
+export type SettingsStackParamList = {
+  SettingsHome: undefined;
+  ChangePassword: undefined;
 };
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 const Tabs = createBottomTabNavigator<AppTabsParamList>();
+const SettingsStack = createNativeStackNavigator<SettingsStackParamList>();
+
+function SettingsStackNavigator() {
+  return (
+    <SettingsStack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: colors.surface },
+        headerTintColor: colors.text,
+        contentStyle: { backgroundColor: colors.background },
+      }}
+    >
+      <SettingsStack.Screen
+        name="SettingsHome"
+        component={SettingsScreen}
+        options={{ title: 'Settings' }}
+      />
+      <SettingsStack.Screen
+        name="ChangePassword"
+        component={ChangePasswordScreen}
+        options={{ title: 'Change Password' }}
+      />
+    </SettingsStack.Navigator>
+  );
+}
 
 function LoadingScreen() {
   return (
@@ -93,6 +125,18 @@ function AppTabsNavigator() {
           title: 'QR Code',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="qr-code" color={color} size={size} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="Settings"
+        component={SettingsStackNavigator}
+        options={{
+          title: 'Settings',
+          // The nested stack renders its own header (incl. the Change Password back button).
+          headerShown: false,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="settings-outline" color={color} size={size} />
           ),
         }}
       />

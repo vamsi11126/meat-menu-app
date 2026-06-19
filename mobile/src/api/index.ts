@@ -35,3 +35,14 @@ export function updateTodayPrices(
 export function fetchOwnerShop(token: string) {
   return apiRequest<ShopDetails>('/api/shops/me', { token });
 }
+
+export function changePassword(
+  token: string,
+  payload: { currentPassword: string; newPassword: string }
+) {
+  return apiRequest<{ message: string }>('/api/auth/change-password', {
+    method: 'PUT',
+    token,
+    body: payload,
+  });
+}
