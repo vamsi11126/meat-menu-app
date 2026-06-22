@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const QRCode = require('qrcode');
+const bcrypt = require('bcrypt');
 require('dotenv').config();
 
 const authMiddleware = require('../middleware/auth');
@@ -26,27 +27,75 @@ const getOwnerShopId = async (userId) => {
   return result.rows[0] ? result.rows[0].shop_id : null;
 };
 
-// POST /api/shops (create shop - super admin only)
-router.post('/', async (req, res) => {
-  try {
-    const { name, address, qr_code_url, business_type, description } = req.body;
-    const qrCodeUrl = qr_code_url || '';
+// POST /api/shops (create shop + its owner login - super admin only)
+router.post('/', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Super admin access required' });
+  }
 
-    if (!name || !address) {
-      return res.status(400).json({ error: 'Name and address are required' });
+  const {
+    name,
+    address,
+    qr_code_url,
+    business_type,
+    description,
+    owner_name,
+    owner_email,
+    owner_password,
+  } = req.body;
+
+  const shopName = typeof name === 'string' ? name.trim() : '';
+  const shopAddress = typeof address === 'string' ? address.trim() : '';
+  const ownerName = typeof owner_name === 'string' ? owner_name.trim() : '';
+  const ownerEmail = typeof owner_email === 'string' ? owner_email.trim().toLowerCase() : '';
+
+  if (!shopName || !shopAddress) {
+    return res.status(400).json({ error: 'Name and address are required' });
+  }
+  if (!ownerName || !ownerEmail || !owner_password) {
+    return res.status(400).json({ error: 'Owner name, email and password are required' });
+  }
+  if (String(owner_password).length < 6) {
+    return res.status(400).json({ error: 'Owner password must be at least 6 characters' });
+  }
+
+  const client = await DB.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Reject duplicate owner email before creating the shop.
+    const existing = await client.query('SELECT id FROM users WHERE email = $1', [ownerEmail]);
+    if (existing.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'An account with this email already exists' });
     }
 
-    const result = await DB.query(
+    const shopResult = await client.query(
       `INSERT INTO shops (name, address, qr_code_url, business_type, description)
        VALUES ($1, $2, $3, COALESCE($4, 'daily_menu'), $5)
        RETURNING *`,
-      [name, address, qrCodeUrl, business_type || null, description || null]
+      [shopName, shopAddress, qr_code_url || '', business_type || null, description || null]
+    );
+    const shop = shopResult.rows[0];
+
+    const passwordHash = await bcrypt.hash(String(owner_password), 10);
+    const userResult = await client.query(
+      `INSERT INTO users (name, email, password_hash, role, shop_id)
+       VALUES ($1, $2, $3, 'shop_owner', $4)
+       RETURNING id, name, email, role, shop_id`,
+      [ownerName, ownerEmail, passwordHash, shop.id]
     );
 
-    res.status(201).json(result.rows[0]);
+    await client.query('COMMIT');
+
+    // Never return the password hash.
+    res.status(201).json({ ...shop, owner: userResult.rows[0] });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('Shop creation error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
   }
 });
 
