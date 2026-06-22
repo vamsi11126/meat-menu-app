@@ -6,7 +6,10 @@ const QRCode = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
   const shopId = user?.shop_id;
-  const qrUrl = `http://10.244.247.19:5173/menu/${shopId ?? ''}`;
+  // Point the QR at the public menu on whatever origin this admin panel is
+  // served from (production Vercel URL in prod), so customers can actually
+  // reach it — not a dev LAN address.
+  const qrUrl = `${window.location.origin}/menu/${shopId ?? ''}`;
 
   const downloadQRCode = () => {
     const canvas = document.getElementById('shop-qr-code') as HTMLCanvasElement | null;
