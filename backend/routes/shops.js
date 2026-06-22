@@ -101,8 +101,28 @@ router.post('/', authMiddleware, async (req, res) => {
 
 // GET /api/shops (list all shops - super admin only)
 router.get('/', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Super admin access required' });
+  }
+
   try {
-    const result = await DB.query('SELECT * FROM shops ORDER BY created_at DESC');
+    // Join each shop's owner (one per shop) so the admin list can show
+    // and edit owner name/email.
+    const result = await DB.query(
+      `SELECT s.*,
+              o.id AS owner_id,
+              o.name AS owner_name,
+              o.email AS owner_email
+       FROM shops s
+       LEFT JOIN LATERAL (
+         SELECT id, name, email
+         FROM users
+         WHERE shop_id = s.id AND role = 'shop_owner'
+         ORDER BY id
+         LIMIT 1
+       ) o ON true
+       ORDER BY s.created_at DESC`
+    );
     res.json(result.rows);
   } catch (err) {
     console.error('Shop list error:', err);
@@ -357,10 +377,25 @@ router.get('/:id/prices', async (req, res) => {
   }
 });
 
-// GET /api/shops/:id (get single shop)
+// GET /api/shops/:id (get single shop, incl. owner info for editing)
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
-    const result = await DB.query('SELECT * FROM shops WHERE id = $1', [req.params.id]);
+    const result = await DB.query(
+      `SELECT s.*,
+              o.id AS owner_id,
+              o.name AS owner_name,
+              o.email AS owner_email
+       FROM shops s
+       LEFT JOIN LATERAL (
+         SELECT id, name, email
+         FROM users
+         WHERE shop_id = s.id AND role = 'shop_owner'
+         ORDER BY id
+         LIMIT 1
+       ) o ON true
+       WHERE s.id = $1`,
+      [req.params.id]
+    );
     const shop = result.rows[0];
 
     if (!shop) {
@@ -381,6 +416,190 @@ router.get('/:id', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('Shop get error:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/shops/:id (super admin — edit shop + its owner)
+router.put('/:id', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Super admin access required' });
+  }
+
+  const shopId = Number(req.params.id);
+  const {
+    name,
+    address,
+    business_type,
+    description,
+    owner_name,
+    owner_email,
+    owner_password,
+  } = req.body;
+
+  // Build the shop update from provided fields only.
+  const shopFields = [];
+  const shopValues = [];
+  let p = 1;
+
+  if (name !== undefined) {
+    const v = typeof name === 'string' ? name.trim() : '';
+    if (!v) return res.status(400).json({ error: 'Shop name cannot be empty' });
+    if (v.length > 100) return res.status(400).json({ error: 'Shop name must be 100 characters or fewer' });
+    shopFields.push(`name = $${p++}`);
+    shopValues.push(v);
+  }
+  if (address !== undefined) {
+    const v = typeof address === 'string' ? address.trim() : '';
+    if (!v) return res.status(400).json({ error: 'Address cannot be empty' });
+    shopFields.push(`address = $${p++}`);
+    shopValues.push(v);
+  }
+  if (business_type !== undefined) {
+    if (business_type !== 'daily_menu' && business_type !== 'static_menu') {
+      return res.status(400).json({ error: "business_type must be 'daily_menu' or 'static_menu'" });
+    }
+    shopFields.push(`business_type = $${p++}`);
+    shopValues.push(business_type);
+  }
+  if (description !== undefined) {
+    shopFields.push(`description = $${p++}`);
+    shopValues.push(description === null ? null : String(description));
+  }
+
+  // Build the owner update from provided fields only.
+  const ownerName = owner_name !== undefined ? String(owner_name).trim() : undefined;
+  const ownerEmail = owner_email !== undefined ? String(owner_email).trim().toLowerCase() : undefined;
+  if (ownerName !== undefined && !ownerName) {
+    return res.status(400).json({ error: 'Owner name cannot be empty' });
+  }
+  if (ownerEmail !== undefined && !ownerEmail) {
+    return res.status(400).json({ error: 'Owner email cannot be empty' });
+  }
+  if (owner_password !== undefined && String(owner_password).length < 6) {
+    return res.status(400).json({ error: 'Owner password must be at least 6 characters' });
+  }
+
+  const client = await DB.connect();
+  try {
+    await client.query('BEGIN');
+
+    const shopExists = await client.query('SELECT id FROM shops WHERE id = $1', [shopId]);
+    if (shopExists.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Shop not found' });
+    }
+
+    if (shopFields.length > 0) {
+      shopValues.push(shopId);
+      await client.query(
+        `UPDATE shops SET ${shopFields.join(', ')} WHERE id = $${p}`,
+        shopValues
+      );
+    }
+
+    // Resolve this shop's owner (if any) for owner-field updates.
+    const ownerRow = await client.query(
+      "SELECT id FROM users WHERE shop_id = $1 AND role = 'shop_owner' ORDER BY id LIMIT 1",
+      [shopId]
+    );
+    const ownerId = ownerRow.rows[0] ? ownerRow.rows[0].id : null;
+
+    const wantsOwnerUpdate =
+      ownerName !== undefined || ownerEmail !== undefined || owner_password !== undefined;
+
+    if (wantsOwnerUpdate) {
+      if (!ownerId) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'This shop has no owner account to update' });
+      }
+
+      // Guard against assigning an email already used by a different account.
+      if (ownerEmail !== undefined) {
+        const clash = await client.query(
+          'SELECT id FROM users WHERE email = $1 AND id <> $2',
+          [ownerEmail, ownerId]
+        );
+        if (clash.rows.length > 0) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'An account with this email already exists' });
+        }
+      }
+
+      const ownerFields = [];
+      const ownerValues = [];
+      let q = 1;
+      if (ownerName !== undefined) {
+        ownerFields.push(`name = $${q++}`);
+        ownerValues.push(ownerName);
+      }
+      if (ownerEmail !== undefined) {
+        ownerFields.push(`email = $${q++}`);
+        ownerValues.push(ownerEmail);
+      }
+      if (owner_password !== undefined) {
+        ownerFields.push(`password_hash = $${q++}`);
+        ownerValues.push(await bcrypt.hash(String(owner_password), 10));
+      }
+      ownerValues.push(ownerId);
+      await client.query(
+        `UPDATE users SET ${ownerFields.join(', ')} WHERE id = $${q}`,
+        ownerValues
+      );
+    }
+
+    await client.query('COMMIT');
+
+    // Return the fresh shop + owner view.
+    const updated = await DB.query(
+      `SELECT s.*, o.id AS owner_id, o.name AS owner_name, o.email AS owner_email
+       FROM shops s
+       LEFT JOIN LATERAL (
+         SELECT id, name, email FROM users
+         WHERE shop_id = s.id AND role = 'shop_owner' ORDER BY id LIMIT 1
+       ) o ON true
+       WHERE s.id = $1`,
+      [shopId]
+    );
+    res.json(updated.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Shop update error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /api/shops/:id (super admin — delete shop + its owner(s))
+router.delete('/:id', authMiddleware, async (req, res) => {
+  if (req.user.role !== 'super_admin') {
+    return res.status(403).json({ error: 'Super admin access required' });
+  }
+
+  const shopId = Number(req.params.id);
+  const client = await DB.connect();
+  try {
+    await client.query('BEGIN');
+
+    const shopExists = await client.query('SELECT id, name FROM shops WHERE id = $1', [shopId]);
+    if (shopExists.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Shop not found' });
+    }
+
+    // users.shop_id has no ON DELETE cascade, so remove owners first.
+    // shop_categories / shop_items / daily_prices cascade automatically.
+    await client.query('DELETE FROM users WHERE shop_id = $1', [shopId]);
+    await client.query('DELETE FROM shops WHERE id = $1', [shopId]);
+
+    await client.query('COMMIT');
+    res.json({ message: 'Shop deleted', id: shopId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Shop delete error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  } finally {
+    client.release();
   }
 });
 

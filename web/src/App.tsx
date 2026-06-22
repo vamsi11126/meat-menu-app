@@ -10,6 +10,7 @@ import OwnerQRCode from './pages/Owner/QRCode';
 import OwnerShopSettings from './pages/Owner/ShopSettings';
 import AddShop from './pages/SuperAdmin/AddShop';
 import SuperAdminDashboard from './pages/SuperAdmin/Dashboard';
+import EditShop from './pages/SuperAdmin/EditShop';
 
 const App = () => (
   <AuthProvider>
@@ -32,6 +33,14 @@ const App = () => (
             </ProtectedRoute>
           }
           path="/super-admin/add-shop"
+        />
+        <Route
+          element={
+            <ProtectedRoute requiredRole="super_admin">
+              <EditShop />
+            </ProtectedRoute>
+          }
+          path="/super-admin/edit-shop/:id"
         />
         <Route
           element={
