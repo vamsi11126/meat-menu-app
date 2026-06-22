@@ -1,83 +1,41 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../../api/axios';
+import OwnerNav from '../../components/OwnerNav';
 import { useAuth } from '../../context/AuthContext';
+import {
+  fetchMyShop,
+  fetchShopPrices,
+  formatPrice,
+  getErrorMessage,
+  type PricedItem,
+  type Shop,
+} from '../../api/menu';
 
-type PriceRecord = {
-  shop_id: number;
-  shop_name?: string | null;
-  date: string;
-  chicken_kg: number | string;
-  mutton_kg: number | string;
-  fish_kg: number | string;
-  eggs_kg: number | string;
-  updated_at: string | null;
-};
+const UNCATEGORIZED = 'Uncategorized';
 
-type Shop = {
-  id: number;
-  name: string;
-};
+// Group resolved items by category, preserving the API's ordering
+// (items already arrive ordered by category then item display_order).
+const groupByCategory = (items: PricedItem[]) => {
+  const groups: { category: string; items: PricedItem[] }[] = [];
+  const index = new Map<string, number>();
 
-const priceItems = [
-  { label: 'Chicken', key: 'chicken_kg' },
-  { label: 'Mutton', key: 'mutton_kg' },
-  { label: 'Fish', key: 'fish_kg' },
-  { label: 'Eggs', key: 'eggs_kg' },
-] as const;
-
-const getTodayKey = () => new Date().toISOString().split('T')[0];
-
-const formatPrice = (value: number | string) =>
-  new Intl.NumberFormat('en-IN', {
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 0,
-  }).format(Number(value || 0));
-
-const formatTimestamp = (value: string | null) => {
-  if (!value) {
-    return 'Not updated yet';
+  for (const item of items) {
+    const key = item.category_name || UNCATEGORIZED;
+    if (!index.has(key)) {
+      index.set(key, groups.length);
+      groups.push({ category: key, items: [] });
+    }
+    groups[index.get(key)!].items.push(item);
   }
 
-  return new Intl.DateTimeFormat('en-IN', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value));
-};
-
-const getErrorMessage = (error: unknown) => {
-  if (typeof error !== 'object' || error === null || !('response' in error)) {
-    return 'Unable to load dashboard.';
-  }
-
-  const response = (error as { response?: { data?: { error?: string; message?: string } } }).response;
-  return response?.data?.error || response?.data?.message || 'Unable to load dashboard.';
-};
-
-const normalizePriceRecord = (data: PriceRecord | PriceRecord[]) => {
-  if (Array.isArray(data)) {
-    const today = getTodayKey();
-    return data.find((record) => String(record.date).slice(0, 10) === today) || null;
-  }
-
-  return data;
-};
-
-const fetchTodayPrices = async (shopId: number) => {
-  try {
-    const response = await api.get<PriceRecord | PriceRecord[]>(`/api/shops/${shopId}/prices`);
-    return normalizePriceRecord(response.data);
-  } catch {
-    const response = await api.get<PriceRecord>('/api/prices/me/today');
-    return response.data;
-  }
+  return groups;
 };
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [shop, setShop] = useState<Shop | null>(null);
-  const [prices, setPrices] = useState<PriceRecord | null>(null);
+  const [items, setItems] = useState<PricedItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -90,14 +48,12 @@ const Dashboard = () => {
       }
 
       try {
-        const [shopResponse, priceRecord] = await Promise.all([
-          api.get<Shop>('/api/shops/me'),
-          fetchTodayPrices(user.shop_id),
-        ]);
-        setShop(shopResponse.data);
-        setPrices(priceRecord);
+        const shopData = await fetchMyShop();
+        const prices = await fetchShopPrices(shopData.id);
+        setShop(shopData);
+        setItems(prices.items);
       } catch (loadError) {
-        setError(getErrorMessage(loadError));
+        setError(getErrorMessage(loadError, 'Unable to load dashboard.'));
       } finally {
         setIsLoading(false);
       }
@@ -106,27 +62,25 @@ const Dashboard = () => {
     loadDashboard();
   }, [user?.shop_id]);
 
+  const isDaily = shop?.business_type === 'daily_menu';
+  const groups = groupByCategory(items);
+
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-8 text-white">
       <div className="mx-auto max-w-5xl">
-        <header className="mb-8 flex flex-col gap-4 rounded-3xl border border-white/10 bg-white/10 p-6 shadow-xl sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-amber-300">Shop Owner</p>
-            <h1 className="mt-2 text-3xl font-bold">{shop?.name || prices?.shop_name || 'Owner Dashboard'}</h1>
-            <p className="mt-2 text-slate-300">
-              Today is{' '}
-              {new Intl.DateTimeFormat('en-IN', {
-                dateStyle: 'full',
-              }).format(new Date())}
-            </p>
-          </div>
-          <button
-            className="rounded-2xl border border-white/20 px-5 py-3 font-semibold text-white transition hover:bg-white/10"
-            onClick={logout}
-            type="button"
-          >
-            Logout
-          </button>
+        <OwnerNav />
+
+        <header className="mb-8 rounded-3xl border border-white/10 bg-white/10 p-6 shadow-xl">
+          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-amber-300">Shop Owner</p>
+          <h1 className="mt-2 text-3xl font-bold">{shop?.name || 'Owner Dashboard'}</h1>
+          <p className="mt-2 text-slate-300">
+            {new Intl.DateTimeFormat('en-IN', { dateStyle: 'full' }).format(new Date())}
+            {shop ? (
+              <span className="ml-3 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-200">
+                {isDaily ? 'Daily Menu' : 'Static Menu'}
+              </span>
+            ) : null}
+          </p>
         </header>
 
         {isLoading ? (
@@ -141,20 +95,73 @@ const Dashboard = () => {
           <section className="rounded-3xl bg-stone-100 p-6 text-slate-950 shadow-2xl">
             <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-2xl font-bold">Current Prices</h2>
-                <p className="mt-1 text-slate-600">Last updated: {formatTimestamp(prices?.updated_at || null)}</p>
+                <h2 className="text-2xl font-bold">{isDaily ? "Today's Prices" : 'Menu Prices'}</h2>
+                <p className="mt-1 text-slate-600">
+                  {items.length} item{items.length === 1 ? '' : 's'} on your menu
+                </p>
               </div>
+              <button
+                className="rounded-2xl bg-slate-950 px-5 py-3 font-bold text-white transition hover:bg-slate-800"
+                onClick={() => navigate('/owner/menu')}
+                type="button"
+              >
+                Manage Menu
+              </button>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {priceItems.map((item) => (
-                <div className="rounded-3xl bg-white p-5 shadow" key={item.key}>
-                  <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">{item.label}</p>
-                  <p className="mt-3 text-3xl font-black">₹{formatPrice(prices?.[item.key] || 0)}</p>
-                  <p className="mt-1 text-sm text-slate-500">per kg</p>
-                </div>
-              ))}
-            </div>
+            {items.length === 0 ? (
+              <div className="rounded-3xl bg-white p-8 text-center text-slate-600">
+                No items yet. Use{' '}
+                <button
+                  className="font-bold text-amber-600 underline"
+                  onClick={() => navigate('/owner/menu')}
+                  type="button"
+                >
+                  Manage Menu
+                </button>{' '}
+                to add your first items.
+              </div>
+            ) : (
+              <div className="space-y-8">
+                {groups.map((group) => (
+                  <div key={group.category}>
+                    <h3 className="mb-3 text-sm font-bold uppercase tracking-[0.2em] text-slate-500">
+                      {group.category}
+                    </h3>
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {group.items.map((item) => {
+                        const price = formatPrice(item.price);
+                        return (
+                          <div
+                            className={`rounded-3xl bg-white p-5 shadow ${
+                              item.is_available ? '' : 'opacity-60'
+                            }`}
+                            key={item.item_id}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="text-lg font-bold">{item.name}</p>
+                              {!item.is_available ? (
+                                <span className="rounded-full bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-600">
+                                  Unavailable
+                                </span>
+                              ) : null}
+                            </div>
+                            <p className="mt-3 text-3xl font-black">
+                              {price === null ? (
+                                <span className="text-xl font-bold text-slate-400">Not set</span>
+                              ) : (
+                                `₹${price}`
+                              )}
+                            </p>
+                            <p className="mt-1 text-sm text-slate-500">{item.unit}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="mt-8 grid gap-3 sm:grid-cols-2">
               <button

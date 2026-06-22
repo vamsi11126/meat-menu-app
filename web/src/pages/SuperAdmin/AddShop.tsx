@@ -2,9 +2,12 @@ import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 
+type BusinessType = 'daily_menu' | 'static_menu';
+
 type FormState = {
   name: string;
   address: string;
+  businessType: BusinessType;
   ownerName: string;
   ownerEmail: string;
   ownerPassword: string;
@@ -13,6 +16,7 @@ type FormState = {
 const initialForm: FormState = {
   name: '',
   address: '',
+  businessType: 'daily_menu',
   ownerName: '',
   ownerEmail: '',
   ownerPassword: '',
@@ -79,6 +83,7 @@ const AddShop = () => {
       await api.post('/api/shops', {
         name: form.name.trim(),
         address: form.address.trim(),
+        business_type: form.businessType,
         owner_name: form.ownerName.trim(),
         owner_email: form.ownerEmail.trim(),
         owner_password: form.ownerPassword,
@@ -126,6 +131,23 @@ const AddShop = () => {
                 onChange={(event) => updateField('address', event.target.value)}
                 value={form.address}
               />
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block font-medium">Business Type</span>
+              <select
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none transition focus:border-amber-400 focus:ring-2 focus:ring-amber-200"
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, businessType: event.target.value as BusinessType }))
+                }
+                value={form.businessType}
+              >
+                <option value="daily_menu">Daily Menu (e.g. Meat Shop)</option>
+                <option value="static_menu">Static Menu (e.g. Juice Bar, Restaurant)</option>
+              </select>
+              <span className="mt-1 block text-xs text-slate-500">
+                Daily Menu owners set prices each day; Static Menu owners edit prices only when they change.
+              </span>
             </label>
 
             <div className="grid gap-5 sm:grid-cols-2">

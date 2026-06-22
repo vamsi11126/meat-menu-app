@@ -4,8 +4,10 @@ import { AuthProvider } from './context/AuthContext';
 import Login from './pages/Login';
 import Menu from './pages/Menu';
 import OwnerDashboard from './pages/Owner/Dashboard';
+import OwnerMenu from './pages/Owner/Menu';
 import OwnerPrices from './pages/Owner/Prices';
 import OwnerQRCode from './pages/Owner/QRCode';
+import OwnerShopSettings from './pages/Owner/ShopSettings';
 import AddShop from './pages/SuperAdmin/AddShop';
 import SuperAdminDashboard from './pages/SuperAdmin/Dashboard';
 
@@ -46,6 +48,22 @@ const App = () => (
             </ProtectedRoute>
           }
           path="/owner/prices"
+        />
+        <Route
+          element={
+            <ProtectedRoute requiredRole="shop_owner">
+              <OwnerMenu />
+            </ProtectedRoute>
+          }
+          path="/owner/menu"
+        />
+        <Route
+          element={
+            <ProtectedRoute requiredRole="shop_owner">
+              <OwnerShopSettings />
+            </ProtectedRoute>
+          }
+          path="/owner/settings"
         />
         <Route
           element={

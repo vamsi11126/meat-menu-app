@@ -1,86 +1,40 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from '../../api/axios';
+import OwnerNav from '../../components/OwnerNav';
 import { useAuth } from '../../context/AuthContext';
+import {
+  fetchMyShop,
+  fetchShopPrices,
+  getErrorMessage,
+  savePrices,
+  type PricedItem,
+  type Shop,
+} from '../../api/menu';
 
-type PriceForm = {
-  chicken_kg: string;
-  mutton_kg: string;
-  fish_kg: string;
-  eggs_kg: string;
-};
+const UNCATEGORIZED = 'Uncategorized';
 
-type PriceRecord = {
-  date: string;
-  chicken_kg: number | string;
-  mutton_kg: number | string;
-  fish_kg: number | string;
-  eggs_kg: number | string;
-};
+const groupByCategory = (items: PricedItem[]) => {
+  const groups: { category: string; items: PricedItem[] }[] = [];
+  const index = new Map<string, number>();
 
-const fields = [
-  { label: 'Chicken (₹/kg)', key: 'chicken_kg' },
-  { label: 'Mutton (₹/kg)', key: 'mutton_kg' },
-  { label: 'Fish (₹/kg)', key: 'fish_kg' },
-  { label: 'Eggs (₹/kg)', key: 'eggs_kg' },
-] as const;
-
-const initialForm: PriceForm = {
-  chicken_kg: '',
-  mutton_kg: '',
-  fish_kg: '',
-  eggs_kg: '',
-};
-
-const getTodayKey = () => new Date().toISOString().split('T')[0];
-
-const getErrorMessage = (error: unknown) => {
-  if (typeof error !== 'object' || error === null || !('response' in error)) {
-    return 'Unable to save prices.';
+  for (const item of items) {
+    const key = item.category_name || UNCATEGORIZED;
+    if (!index.has(key)) {
+      index.set(key, groups.length);
+      groups.push({ category: key, items: [] });
+    }
+    groups[index.get(key)!].items.push(item);
   }
 
-  const response = (error as { response?: { data?: { error?: string; message?: string } } }).response;
-  return response?.data?.error || response?.data?.message || 'Unable to save prices.';
-};
-
-const normalizePriceRecord = (data: PriceRecord | PriceRecord[]) => {
-  if (Array.isArray(data)) {
-    const today = getTodayKey();
-    return data.find((record) => String(record.date).slice(0, 10) === today) || null;
-  }
-
-  return data;
-};
-
-const fetchExistingPrices = async (shopId: number) => {
-  try {
-    const response = await api.get<PriceRecord | PriceRecord[]>(`/api/shops/${shopId}/prices`);
-    return normalizePriceRecord(response.data);
-  } catch {
-    const response = await api.get<PriceRecord>('/api/prices/me/today');
-    return response.data;
-  }
-};
-
-const savePrices = async (shopId: number, form: PriceForm) => {
-  const payload = {
-    chicken_kg: Number(form.chicken_kg),
-    mutton_kg: Number(form.mutton_kg),
-    fish_kg: Number(form.fish_kg),
-    eggs_kg: Number(form.eggs_kg),
-  };
-
-  try {
-    return await api.post(`/api/shops/${shopId}/prices`, payload);
-  } catch {
-    return api.put('/api/prices/me/today', payload);
-  }
+  return groups;
 };
 
 const Prices = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [form, setForm] = useState<PriceForm>(initialForm);
+  const [shop, setShop] = useState<Shop | null>(null);
+  const [items, setItems] = useState<PricedItem[]>([]);
+  const [form, setForm] = useState<Record<number, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
@@ -95,18 +49,17 @@ const Prices = () => {
       }
 
       try {
-        const existingPrices = await fetchExistingPrices(user.shop_id);
-
-        if (existingPrices) {
-          setForm({
-            chicken_kg: Number(existingPrices.chicken_kg) > 0 ? String(existingPrices.chicken_kg) : '',
-            mutton_kg: Number(existingPrices.mutton_kg) > 0 ? String(existingPrices.mutton_kg) : '',
-            fish_kg: Number(existingPrices.fish_kg) > 0 ? String(existingPrices.fish_kg) : '',
-            eggs_kg: Number(existingPrices.eggs_kg) > 0 ? String(existingPrices.eggs_kg) : '',
-          });
+        const shopData = await fetchMyShop();
+        const prices = await fetchShopPrices(shopData.id);
+        setShop(shopData);
+        setItems(prices.items);
+        const initial: Record<number, string> = {};
+        for (const item of prices.items) {
+          initial[item.item_id] = item.price === null || item.price === undefined ? '' : String(item.price);
         }
+        setForm(initial);
       } catch (loadError) {
-        setError(getErrorMessage(loadError));
+        setError(getErrorMessage(loadError, 'Unable to load prices.'));
       } finally {
         setIsLoading(false);
       }
@@ -115,8 +68,12 @@ const Prices = () => {
     loadPrices();
   }, [user?.shop_id]);
 
-  const updateField = (field: keyof PriceForm, value: string) => {
-    setForm((current) => ({ ...current, [field]: value }));
+  const isDaily = shop?.business_type === 'daily_menu';
+  const groups = useMemo(() => groupByCategory(items), [items]);
+
+  const updateField = (itemId: number, value: string) => {
+    setForm((current) => ({ ...current, [itemId]: value }));
+    setSuccess('');
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -124,73 +81,112 @@ const Prices = () => {
     setError('');
     setSuccess('');
 
-    if (!user?.shop_id) {
-      setError('No shop is assigned to this owner account.');
+    if (items.length === 0) {
+      setError('No items to price. Add items from Manage Menu first.');
       return;
     }
 
-    const hasInvalidValue = Object.values(form).some((value) => value.trim() === '' || Number(value) <= 0);
-
-    if (hasInvalidValue) {
-      setError('Please enter a valid price for all items');
-      return;
+    // Validate: every item must have a non-empty, non-negative price.
+    for (const item of items) {
+      const raw = form[item.item_id];
+      if (raw === undefined || raw.trim() === '') {
+        setError(`Please enter a price for "${item.name}".`);
+        return;
+      }
+      const value = Number(raw);
+      if (Number.isNaN(value) || value < 0) {
+        setError(`"${item.name}" must have a valid non-negative price.`);
+        return;
+      }
     }
+
+    const prices = items.map((item) => ({
+      item_id: item.item_id,
+      price: Number(form[item.item_id]),
+    }));
 
     setIsSaving(true);
 
     try {
-      await savePrices(user.shop_id, form);
+      const response = await savePrices(prices);
+      // Refresh from the server's resolved prices.
+      setItems(response.data.items);
       setSuccess('Prices saved successfully.');
     } catch (saveError) {
-      setError(getErrorMessage(saveError));
+      setError(getErrorMessage(saveError, 'Unable to save prices.'));
     } finally {
       setIsSaving(false);
     }
   };
 
   return (
-    <main className="min-h-screen bg-stone-100 px-4 py-8 text-slate-950">
+    <main className="min-h-screen bg-slate-950 px-4 py-8 text-white">
       <div className="mx-auto max-w-3xl">
-        <button
-          className="mb-6 rounded-2xl border border-slate-300 px-4 py-2 font-semibold text-slate-700 transition hover:bg-white"
-          onClick={() => navigate('/owner/dashboard')}
-          type="button"
-        >
-          Back to Dashboard
-        </button>
+        <OwnerNav />
 
-        <section className="rounded-3xl bg-white p-6 shadow-xl sm:p-8">
+        <section className="rounded-3xl bg-white p-6 text-slate-950 shadow-xl sm:p-8">
           <div className="mb-8">
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-amber-600">Today&apos;s Menu</p>
-            <h1 className="mt-2 text-3xl font-bold">Update Prices</h1>
-            <p className="mt-2 text-slate-600">Set all prices per kg for today.</p>
+            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-amber-600">
+              {isDaily ? "Today's Menu" : 'Menu Prices'}
+            </p>
+            <h1 className="mt-2 text-3xl font-bold">{isDaily ? "Set today's prices" : 'Update menu prices'}</h1>
+            <p className="mt-2 text-slate-600">
+              {isDaily
+                ? 'Enter the prices customers should see for today.'
+                : 'Update prices whenever they change. These stay live until you change them.'}
+            </p>
           </div>
 
           {isLoading ? <div className="rounded-2xl bg-slate-100 p-4">Loading prices...</div> : null}
 
-          {!isLoading ? (
-            <form className="space-y-5" onSubmit={handleSubmit}>
-              <div className="grid gap-5 sm:grid-cols-2">
-                {fields.map((field) => (
-                  <label className="block" key={field.key}>
-                    <span className="mb-2 block font-medium">{field.label}</span>
-                    <input
-                      className="w-full rounded-2xl border border-slate-200 px-4 py-3 outline-none transition focus:border-amber-400 focus:ring-2 focus:ring-amber-200"
-                      min="0"
-                      onChange={(event) => updateField(field.key, event.target.value)}
-                      placeholder=""
-                      step="0.01"
-                      type="number"
-                      value={form[field.key]}
-                    />
-                  </label>
-                ))}
-              </div>
+          {!isLoading && items.length === 0 ? (
+            <div className="rounded-2xl bg-slate-100 p-6 text-center text-slate-600">
+              You have no menu items yet.{' '}
+              <button
+                className="font-bold text-amber-600 underline"
+                onClick={() => navigate('/owner/menu')}
+                type="button"
+              >
+                Add items
+              </button>{' '}
+              to start setting prices.
+            </div>
+          ) : null}
+
+          {!isLoading && items.length > 0 ? (
+            <form className="space-y-8" onSubmit={handleSubmit}>
+              {groups.map((group) => (
+                <div key={group.category}>
+                  <h3 className="mb-3 text-sm font-bold uppercase tracking-[0.2em] text-slate-500">
+                    {group.category}
+                  </h3>
+                  <div className="grid gap-5 sm:grid-cols-2">
+                    {group.items.map((item) => (
+                      <label className="block" key={item.item_id}>
+                        <span className="mb-2 flex items-center justify-between font-medium">
+                          <span>{item.name}</span>
+                          <span className="text-xs text-slate-400">{item.unit}</span>
+                        </span>
+                        <div className="flex items-center rounded-2xl border border-slate-200 px-4 transition focus-within:border-amber-400 focus-within:ring-2 focus-within:ring-amber-200">
+                          <span className="mr-1 text-slate-500">₹</span>
+                          <input
+                            className="w-full bg-transparent py-3 outline-none"
+                            min="0"
+                            onChange={(event) => updateField(item.item_id, event.target.value)}
+                            placeholder="0"
+                            step="0.01"
+                            type="number"
+                            value={form[item.item_id] ?? ''}
+                          />
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
 
               {error ? (
-                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                  {error}
-                </div>
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
               ) : null}
 
               {success ? (
