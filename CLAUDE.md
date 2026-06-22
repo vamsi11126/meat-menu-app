@@ -127,21 +127,24 @@ Price behavior by business_type:
 - All new API routes for categories, items, availability, shop name edit
 - Fresh Meat Market migrated to new schema
 
-### Platform Rewrite — Phase 2 (Web item management) ❌ NOT STARTED
-- Item + category management screens for shop owners
-- Shop name edit on web
-- Public menu page rewritten to render dynamic items + categories
+### Platform Rewrite — Phase 2 (Web item management) ✅ COMPLETE
+- Item + category management screens for shop owners (/owner/menu)
+- Shop name edit on web (/owner/settings)
+- Dashboard + Prices rewritten for dynamic items grouped by category
+- AddShop business_type dropdown; shared src/api/menu.ts + OwnerNav
+- Deployed to Vercel production
 
-### Platform Rewrite — Phase 3 (Public menu rewrite) ❌ NOT STARTED
-- Remove hardcoded Chicken/Mutton/Fish/Eggs
-- Render categories + items dynamically
-- Grey out unavailable items
-- No bilingual for MVP
+### Platform Rewrite — Phase 3 (Public menu rewrite) ✅ COMPLETE
+- Removed hardcoded Chicken/Mutton/Fish/Eggs + bilingual Telugu
+- Public /menu/:shopId renders categories + items dynamically
+- Unavailable items greyed out; unset prices show "Not available"
+- Driven by GET /api/shops/:id/prices (new item-based response)
 
 ### Platform Rewrite — Phase 4 (Mobile item management) ❌ NOT STARTED
 - Item + category management in Settings tab
 - Price edit per item for static_menu shops
 - Availability toggle per item
+
 
 ### Platform Rewrite — Phase 5 (End-to-end testing + deployment) ❌ NOT STARTED
 - Test both shop types end to end
@@ -149,5 +152,6 @@ Price behavior by business_type:
 - Onboard juice bar owner with their 60+ items
 
 ## Current task
-Platform rewrite Phase 1 (schema + backend) complete.
-Next: Platform rewrite Phase 2 — web admin item/category management screens.
+Platform rewrite Phases 1–3 complete (schema + backend, web item/category
+management, public menu rewrite). All deployed to production.
+Next: Platform rewrite Phase 4 — mobile item management (Expo app).
