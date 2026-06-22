@@ -1,188 +1,164 @@
 const express = require('express');
 const router = express.Router();
 
-const authMiddleware = require('../middleware/auth');
 const DB = require('../config/db');
 
-const getTodayDate = () => new Date().toISOString().split('T')[0];
-
-const getShopPriceForDisplay = async (shopId) => {
+// Today's date in Asia/Kolkata, as YYYY-MM-DD (used for daily_menu price rows).
+const getTodayDate = async () => {
   const result = await DB.query(
-    `SELECT dp.*,
-            s.name AS shop_name
-     FROM daily_prices dp
-     LEFT JOIN shops s ON s.id = dp.shop_id
-     WHERE dp.shop_id = $1
-     ORDER BY
-       CASE
-         WHEN DATE(dp.updated_at AT TIME ZONE 'Asia/Kolkata') = CURRENT_DATE AT TIME ZONE 'Asia/Kolkata' THEN 0
-         ELSE 1
-       END,
-       dp.updated_at DESC
-     LIMIT 1`,
+    "SELECT TO_CHAR(NOW() AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD') AS today"
+  );
+  return result.rows[0].today;
+};
+
+// Resolve a shop's business_type (defaults to 'daily_menu').
+const getShopBusinessType = async (shopId) => {
+  const result = await DB.query(
+    'SELECT id, name, business_type FROM shops WHERE id = $1',
     [shopId]
   );
-
   return result.rows[0] || null;
 };
 
-const ensureShopOwner = (req, res) => {
-  if (req.user.role !== 'shop_owner') {
-    res.status(403).json({ error: 'Shop owner access required' });
-    return false;
+// Public read of a shop's menu prices, resolved per business_type.
+// Returns one row per item with a `price` field plus item/category metadata.
+//   - static_menu: price comes straight from shop_items.price
+//   - daily_menu:  price comes from today's daily_prices row, falling back to
+//                  the most recent prior daily_prices row for that item.
+const getPricesForShop = async (shopId) => {
+  const shop = await getShopBusinessType(shopId);
+  if (!shop) {
+    return null;
   }
 
-  return true;
+  if (shop.business_type === 'static_menu') {
+    const result = await DB.query(
+      `SELECT i.id AS item_id,
+              i.name,
+              i.unit,
+              i.is_available,
+              i.category_id,
+              c.name AS category_name,
+              i.display_order,
+              i.price,
+              i.updated_at
+       FROM shop_items i
+       LEFT JOIN shop_categories c ON c.id = i.category_id
+       WHERE i.shop_id = $1
+       ORDER BY COALESCE(c.display_order, 2147483647), c.id,
+                i.display_order, i.id`,
+      [shopId]
+    );
+    return { shop_id: Number(shopId), shop_name: shop.name, business_type: shop.business_type, items: result.rows };
+  }
+
+  // daily_menu: pick today's price per item, else the latest prior price.
+  const today = await getTodayDate();
+  const result = await DB.query(
+    `SELECT i.id AS item_id,
+            i.name,
+            i.unit,
+            i.is_available,
+            i.category_id,
+            c.name AS category_name,
+            i.display_order,
+            latest.price,
+            latest.date AS price_date,
+            latest.updated_at
+     FROM shop_items i
+     LEFT JOIN shop_categories c ON c.id = i.category_id
+     LEFT JOIN LATERAL (
+       SELECT dp.price, dp.date, dp.updated_at
+       FROM daily_prices dp
+       WHERE dp.item_id = i.id
+       ORDER BY
+         CASE WHEN dp.date = $2::date THEN 0 ELSE 1 END,
+         dp.date DESC,
+         dp.updated_at DESC
+       LIMIT 1
+     ) latest ON true
+     WHERE i.shop_id = $1
+     ORDER BY COALESCE(c.display_order, 2147483647), c.id,
+              i.display_order, i.id`,
+    [shopId, today]
+  );
+  return { shop_id: Number(shopId), shop_name: shop.name, business_type: shop.business_type, items: result.rows };
 };
 
-// GET /api/prices/shop/:shopId (list prices for a shop)
-router.get('/shop/:shopId', async (req, res) => {
-  try {
-    const { shopId } = req.params;
+// Owner write of prices. `prices` is [{ item_id, price }, ...].
+//   - static_menu: writes price onto shop_items
+//   - daily_menu:  upserts today's row in daily_prices
+// Only items belonging to the owner's shop are accepted.
+const setPricesForOwner = async (userId, prices) => {
+  if (!Array.isArray(prices) || prices.length === 0) {
+    return { error: 'prices must be a non-empty array of { item_id, price }', status: 400 };
+  }
 
-    const price = await getShopPriceForDisplay(shopId);
-
-    if (!price) {
-      return res.json([]);
+  const normalized = [];
+  for (const entry of prices) {
+    const itemId = Number(entry && entry.item_id);
+    const price = Number(entry && entry.price);
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      return { error: 'Each price entry requires a valid item_id', status: 400 };
     }
-
-    res.json(price);
-  } catch (err) {
-    console.error('Prices error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// GET /api/prices/me/today (logged-in shop owner's prices for today)
-router.get('/me/today', authMiddleware, async (req, res) => {
-  if (!ensureShopOwner(req, res)) {
-    return;
-  }
-
-  try {
-    const today = getTodayDate();
-    const result = await DB.query(
-      `SELECT dp.*,
-              s.name AS shop_name,
-              s.address
-       FROM users u
-       INNER JOIN shops s ON s.id = u.shop_id
-       LEFT JOIN daily_prices dp ON dp.shop_id = s.id AND dp.date = $2
-       WHERE u.id = $1`,
-      [req.user.id, today]
-    );
-
-    const row = result.rows[0];
-
-    if (!row) {
-      return res.status(404).json({ error: 'Shop not found for user' });
+    if (Number.isNaN(price) || price < 0) {
+      return { error: 'Each price must be a non-negative number', status: 400 };
     }
-
-    res.json({
-      shop_id: row.shop_id || req.user.shop_id,
-      shop_name: row.shop_name,
-      address: row.address,
-      date: row.date || today,
-      chicken_kg: row.chicken_kg ?? 0,
-      mutton_kg: row.mutton_kg ?? 0,
-      fish_kg: row.fish_kg ?? 0,
-      eggs_kg: row.eggs_kg ?? 0,
-      updated_at: row.updated_at || null,
-    });
-  } catch (err) {
-    console.error('Owner today prices error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// PUT /api/prices/me/today (upsert today's prices for logged-in shop owner)
-router.put('/me/today', authMiddleware, async (req, res) => {
-  if (!ensureShopOwner(req, res)) {
-    return;
+    normalized.push({ itemId, price });
   }
 
-  try {
-    const { chicken_kg, mutton_kg, fish_kg, eggs_kg } = req.body;
-    const numericPrices = {
-      chicken_kg: Number(chicken_kg),
-      mutton_kg: Number(mutton_kg),
-      fish_kg: Number(fish_kg),
-      eggs_kg: Number(eggs_kg),
-    };
+  const shopResult = await DB.query(
+    `SELECT s.id, s.business_type
+     FROM users u
+     INNER JOIN shops s ON s.id = u.shop_id
+     WHERE u.id = $1 AND u.role = 'shop_owner'`,
+    [userId]
+  );
+  if (shopResult.rows.length === 0) {
+    return { error: 'Shop not found for user', status: 404 };
+  }
+  const shop = shopResult.rows[0];
 
-    if (Object.values(numericPrices).some((value) => Number.isNaN(value) || value < 0)) {
-      return res.status(400).json({ error: 'All price fields must be valid non-negative numbers' });
+  // Ensure every item_id belongs to this shop before writing anything.
+  const itemIds = normalized.map((p) => p.itemId);
+  const owned = await DB.query(
+    'SELECT id FROM shop_items WHERE shop_id = $1 AND id = ANY($2::int[])',
+    [shop.id, itemIds]
+  );
+  const ownedIds = new Set(owned.rows.map((r) => r.id));
+  const foreign = itemIds.filter((id) => !ownedIds.has(id));
+  if (foreign.length > 0) {
+    return { error: `Items do not belong to this shop: ${foreign.join(', ')}`, status: 403 };
+  }
+
+  if (shop.business_type === 'static_menu') {
+    for (const { itemId, price } of normalized) {
+      await DB.query(
+        'UPDATE shop_items SET price = $1, updated_at = NOW() WHERE id = $2 AND shop_id = $3',
+        [price, itemId, shop.id]
+      );
     }
-
-    const shopResult = await DB.query(
-      'SELECT shop_id FROM users WHERE id = $1 AND role = $2',
-      [req.user.id, 'shop_owner']
-    );
-
-    if (shopResult.rows.length === 0 || !shopResult.rows[0].shop_id) {
-      return res.status(404).json({ error: 'Shop not found for user' });
+  } else {
+    const today = await getTodayDate();
+    for (const { itemId, price } of normalized) {
+      await DB.query(
+        `INSERT INTO daily_prices (shop_id, item_id, date, price, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (shop_id, item_id, date)
+         DO UPDATE SET price = EXCLUDED.price, updated_at = NOW()`,
+        [shop.id, itemId, today, price]
+      );
     }
-
-    const today = getTodayDate();
-    const shopId = shopResult.rows[0].shop_id;
-    const result = await DB.query(
-      `INSERT INTO daily_prices (
-         shop_id,
-         date,
-         chicken_kg,
-         mutton_kg,
-         fish_kg,
-         eggs_kg,
-         updated_at
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
-       ON CONFLICT (shop_id, date)
-       DO UPDATE SET
-         chicken_kg = EXCLUDED.chicken_kg,
-         mutton_kg = EXCLUDED.mutton_kg,
-         fish_kg = EXCLUDED.fish_kg,
-         eggs_kg = EXCLUDED.eggs_kg,
-         updated_at = CURRENT_TIMESTAMP
-       RETURNING *`,
-      [
-        shopId,
-        today,
-        numericPrices.chicken_kg,
-        numericPrices.mutton_kg,
-        numericPrices.fish_kg,
-        numericPrices.eggs_kg,
-      ]
-    );
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('Owner price update error:', err);
-    res.status(500).json({ error: 'Internal server error' });
   }
-});
 
-// GET /api/prices/today (list today's prices for all shops)
-router.get('/today', async (req, res) => {
-  try {
-    const today = getTodayDate();
+  const updated = await getPricesForShop(shop.id);
+  return { data: updated, status: 200 };
+};
 
-    const result = await DB.query(
-      `SELECT dp.*,
-              (SELECT s.name FROM shops s WHERE s.id = dp.shop_id) as shop_name
-       FROM daily_prices dp
-       LEFT JOIN shops s ON s.id = dp.shop_id
-       WHERE dp.date = $1
-       ORDER BY s.name`,
-      [today]
-    );
-
-    res.json(result.rows);
-  } catch (err) {
-    console.error('Today prices error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-router.getShopPriceForDisplay = getShopPriceForDisplay;
+// Helpers consumed by routes/shops.js (the /api/shops/:id/prices and
+// /api/shops/me/prices endpoints live under the /api/shops prefix).
+router.getPricesForShop = getPricesForShop;
+router.setPricesForOwner = setPricesForOwner;
+router.getShopBusinessType = getShopBusinessType;
 
 module.exports = router;

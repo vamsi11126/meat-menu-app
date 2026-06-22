@@ -6,7 +6,7 @@ require('dotenv').config();
 const authMiddleware = require('./middleware/auth');
 const authRoutes = require('./routes/auth');
 const shopsRoutes = require('./routes/shops');
-const pricesRoutes = require('./routes/prices');
+const itemsRouter = require('./routes/items');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -16,10 +16,10 @@ app.use(express.json());
 
 app.use('/api/auth', authRoutes);
 app.use('/api/shops', shopsRoutes);
-app.use('/api/prices', pricesRoutes);
+app.use('/api', itemsRouter);
 
 app.get('/', (req, res) => {
-  res.json({ message: 'Meat Menu API - Phase 1 (Backend)' });
+  res.json({ message: 'QR Menu Platform API' });
 });
 
 app.listen(PORT, () => {
