@@ -1,105 +1,153 @@
-# Meat Menu App — Project Context
+# QR Menu Platform — Project Context
 
 ## What this project is
-A digital meat menu system for multiple meat shops.
-Customers scan a QR code to view today's live prices.
-Shop owners update prices each morning via admin panel or mobile app.
+A generic QR code menu platform for small businesses.
+Shop owners manage their menu via web admin panel or mobile app.
+Customers scan a QR code to view the live menu in their browser — no app needed.
+
+Originally built for meat shops. Now being scaled to support any business type
+(juice bars, fruit shops, restaurants, etc.) with dynamic items and categories.
 
 ## Users
-- Super Admin: manages all shops and owners (web only)
-- Shop Owner: updates daily prices, views QR code (web + mobile)
-- Customer: scans QR, views menu in browser (no login, no app)
+- Super Admin: manages shops and owners (web only)
+- Shop Owner: manages menu items, categories, prices, QR code (web + mobile)
+- Customer: scans QR, views menu in browser (no login, no app required)
 
-## Meat items & pricing
-Items: Chicken, Mutton, Fish, Eggs
-Price unit: Per kg only
-Languages: English and Telugu (bilingual display on customer menu)
+## Business types
+- daily_menu: owner sets prices every morning (meat shops)
+  Prices stored in daily_prices table. Falls back to most recent price if not updated today.
+- static_menu: owner edits prices whenever they change (juice bars, restaurants)
+  Prices stored directly on shop_items. No daily entry workflow.
 
 ## Tech stack
-- Backend: Node.js + Express + PostgreSQL
+- Backend: Node.js + Express + PostgreSQL (Supabase hosted)
 - Web frontend: React.js (Vite) + Tailwind CSS
 - Mobile app: React Native (Expo SDK 54)
-- Auth: JWT (stored in localStorage on web, AsyncStorage on mobile)
+- Auth: JWT (localStorage on web, AsyncStorage on mobile)
 - QR generation: qrcode + qrcode.react
+
+## Production URLs
+- Web admin: https://web-gamma-eosin-99.vercel.app
+- Backend API: https://meat-menu-app.onrender.com
+- Database: Supabase (PostgreSQL)
+- QR codes link to: https://web-gamma-eosin-99.vercel.app/menu/:shopId
 
 ## Folder structure
 meat-menu-app/
-  backend/         → Node.js + Express API (COMPLETE)
-  web/             → React.js admin panel (COMPLETE)
-  mobile/          → React Native Expo SDK 54 app (IN PROGRESS)
-  CLAUDE.md        → this file
+  backend/    → Node.js + Express API
+  web/        → React.js admin panel
+  mobile/     → React Native Expo SDK 54 app
+  CLAUDE.md   → this file
 
-## Database tables (PostgreSQL)
+## Database schema (current — post platform rewrite)
+
+### Existing tables (unchanged)
 - users (id, name, email, password_hash, role: 'super_admin'|'shop_owner', shop_id)
-- shops (id, name, address, qr_code_url, created_at)
-- daily_prices (id, shop_id, date, chicken_kg, mutton_kg, fish_kg, eggs_kg, updated_at)
+- shops (id, name, address, qr_code_url, business_type, description, created_at)
+
+### New tables (added in platform rewrite Phase 1)
+- shop_categories (id, shop_id, name, display_order, created_at)
+- shop_items (id, shop_id, category_id, name, price, unit, is_available, display_order, created_at, updated_at)
+- daily_prices (id, shop_id, item_id, date, price, updated_at) — UNIQUE(shop_id, item_id, date)
+  Note: daily_prices now references shop_items.id (not fixed columns)
 
 ## API routes
-POST   /api/auth/login
-GET    /api/shops              (super admin only)
-POST   /api/shops              (super admin only)
-GET    /api/shops/:id/prices   (public — used by customer menu)
-POST   /api/shops/:id/prices   (shop owner only)
-GET    /api/shops/me           (shop owner only — returns shop data including QR code URL)
 
-## Customer menu URL format
-/menu/:shopId → public page, no auth, shows today's prices in EN + Telugu
+### Auth
+POST   /api/auth/login
+PUT    /api/auth/change-password     (shop owner — JWT required)
+
+### Shops (super admin)
+GET    /api/shops                    (super admin only)
+POST   /api/shops                    (super admin only)
+
+### Shop owner self-management
+GET    /api/shops/me                 (owner — returns own shop + QR URL)
+PUT    /api/shops/me/name            (owner — update shop display name)
+
+### Categories
+GET    /api/shops/:id/categories     (public)
+POST   /api/shops/me/categories      (owner only)
+PUT    /api/shops/me/categories/:id  (owner only)
+DELETE /api/shops/me/categories/:id  (owner only)
+
+### Items
+GET    /api/shops/:id/items                        (public)
+POST   /api/shops/me/items                         (owner only)
+PUT    /api/shops/me/items/:id                     (owner only)
+DELETE /api/shops/me/items/:id                     (owner only)
+PATCH  /api/shops/me/items/:id/availability        (owner only)
+
+### Prices
+GET    /api/shops/:id/prices         (public — behavior differs by business_type)
+POST   /api/shops/me/prices          (owner only — behavior differs by business_type)
+
+Price behavior by business_type:
+- daily_menu: reads/writes daily_prices table (date-based)
+- static_menu: reads/writes price directly on shop_items table
 
 ## Key rules
 - Never expose password hashes in API responses
-- Prices are set once per day per shop
 - QR code links to /menu/:shopId and never changes
-- Mobile app is for shop owners only (price update + QR view)
 - Super admin only accessible via web
 - Timezone: always use Asia/Kolkata for date comparisons in SQL
+- Render free tier cold-starts after 15min inactivity (~30-60s first response)
+- MENU_BASE_URL env var on Render controls QR code base URL
+
+## Shops currently in system
+1. Fresh Meat Market (id=1) — business_type='daily_menu'
+   Owner: owner@example.com / owner123
+   Items: Chicken, Mutton, Fish, Eggs (unit: per kg, category: Meat Items)
+2. Juice bar shop (to be created) — business_type='static_menu'
+   Owner: to be created by super admin
+   Items: 60+ items across 5 categories (Fresh Juices, Milk Shakes,
+   Lassi, Amma SPL Mixing, Special Items)
+
+## Test credentials
+- Super admin: admin@example.com / admin123
+- Shop owner: owner@example.com / owner123
 
 ## Build status
 
-### Phase 1 — Backend ✅ COMPLETE
-- Express server, PostgreSQL schema, JWT auth
-- Shop management APIs (GET /api/shops, POST /api/shops)
-- Daily price CRUD with Asia/Kolkata timezone fix
-- QR code generation per shop
-- Public menu API endpoint
-- Seeds file for test data
-
-### Phase 2 — Web Admin Panel ✅ COMPLETE
-- Login page (super admin + shop owner, JWT auth)
-- Super admin dashboard (lists all shops, add new shop)
-- Shop owner dashboard (today's prices, last updated time)
-- Owner price update form (Chicken, Mutton, Fish, Eggs per kg)
-- QR code page (display + download as PNG)
-- Public bilingual menu page at /menu/:shopId (English + Telugu) ✅ verified working
-- Protected routes with role-based access
-- Tailwind CSS styling
-
+### Phase 1 — Backend (original) ✅ COMPLETE
+### Phase 2 — Web Admin Panel (original) ✅ COMPLETE
 ### Phase 3 — Mobile App ✅ COMPLETE
 - Expo SDK 54, React 19, React Native 0.81.5
-- All screens verified on a real Android device (via Expo Go):
-  Login, Dashboard, Update Prices, QR Code
-- Navigation: react-navigation v6 (native stack + bottom tabs)
-- AsyncStorage for JWT token persistence
-- Supabase connected and working
-- API base URL must be set to local network IP (not localhost)
-  → Current test IP: 10.244.247.19:5000 (update when network changes)
-- KNOWN REMAINING ISSUE: QR code shows localhost:5173
-  → Will be fixed in Phase 4 by setting MENU_BASE_URL (backend env)
-    to the production Vercel URL
+- Screens: Login, Dashboard, Update Prices, QR Code, Settings, Change Password
+- Verified on real Android device via Expo Go and standalone APK (EAS build)
+- API base URL: https://meat-menu-app.onrender.com
 
 ### Phase 4 — Deployment ✅ COMPLETE
-- Web admin panel: https://web-gamma-eosin-99.vercel.app
-- Backend API: https://meat-menu-app.onrender.com
-- Database: Supabase (hosted PostgreSQL)
-- QR codes now point to Vercel production URL (fixed)
+- Web on Vercel, Backend on Render, DB on Supabase
+- QR codes point to production Vercel URL
 
-## Known bugs to fix
-1. Super admin shop table shows "Not assigned" for owner name
-   → Fix: JOIN users table in GET /api/shops query on users.shop_id
-2. Menu page shows Rs.0/kg for unset items
-   → Fix: show "Not available" / "అందుబాటులో లేదు" when price is 0 or null
+### Platform Rewrite — Phase 1 (Schema + Backend) ✅ COMPLETE
+- New schema: shop_categories, shop_items, dynamic daily_prices
+- business_type field on shops (daily_menu / static_menu)
+- All new API routes for categories, items, availability, shop name edit
+- Fresh Meat Market migrated to new schema
+
+### Platform Rewrite — Phase 2 (Web item management) ❌ NOT STARTED
+- Item + category management screens for shop owners
+- Shop name edit on web
+- Public menu page rewritten to render dynamic items + categories
+
+### Platform Rewrite — Phase 3 (Public menu rewrite) ❌ NOT STARTED
+- Remove hardcoded Chicken/Mutton/Fish/Eggs
+- Render categories + items dynamically
+- Grey out unavailable items
+- No bilingual for MVP
+
+### Platform Rewrite — Phase 4 (Mobile item management) ❌ NOT STARTED
+- Item + category management in Settings tab
+- Price edit per item for static_menu shops
+- Availability toggle per item
+
+### Platform Rewrite — Phase 5 (End-to-end testing + deployment) ❌ NOT STARTED
+- Test both shop types end to end
+- Deploy updated backend and web to production
+- Onboard juice bar owner with their 60+ items
 
 ## Current task
-System fully deployed. Remaining: mobile smoke test
-against Render backend, then EAS build for standalone APK.
-
-
+Platform rewrite Phase 1 (schema + backend) complete.
+Next: Platform rewrite Phase 2 — web admin item/category management screens.
